@@ -13,10 +13,25 @@ pub fn run(config: Config) -> Result<(), Error> {
     let pacman_packages = get_pacman_packages()?;
     let file_packages = get_file_packages(config_directory)?;
 
-    let (to_uninstall, to_install) = compare_package_lists(pacman_packages.into_iter(), file_packages.into_iter());
-    let _ = install(to_install, config.upgrade_system)?;
+    let (to_install, to_uninstall) = compare_package_lists(pacman_packages.into_iter(), file_packages.into_iter());
+    install(to_install)?;
+    if config.upgrade_system { update()? }
     if config.list_uninstall { list_uninstall(to_uninstall.iter(), to_uninstall.len() == 0); } 
-    if config.allow_uninstall { let _ = uninstall(to_uninstall)?; }
+    if config.allow_uninstall { uninstall(to_uninstall)?; }
+
+    Ok(())
+}
+
+fn update() -> Result<(), Error> {
+    let mut pacman = process::Command::new("sudo");
+    pacman.args(["pacman", "-Syu"]);
+
+    let exit_code = pacman.status()
+        .map_err(|_| Error::FailedInstall(None))?
+        .code().ok_or_else(|| Error::FailedInstall(None))?;
+    if exit_code != 0 {
+        return Err(Error::FailedInstall(Some(exit_code)));
+    }
 
     Ok(())
 }
@@ -47,17 +62,15 @@ fn list_uninstall<'a>(packages: impl Iterator<Item = &'a String>, empty: bool) {
     println!(".");
 }
 
-fn install(packages: Vec<String>, upgrade_system: bool) -> Result<(), Error> {
+fn install(packages: Vec<String>) -> Result<(), Error> {
     list_install(packages.iter(), packages.len() == 0);
 
-    let mut pacman = process::Command::new("sudo");
-    pacman.arg("pacman");
-    if upgrade_system {
-        pacman.arg("-Syu");
-    } else {
-        if packages.len() == 0 { return Ok(()); }
-        pacman.arg("-S");
+    if packages.len() == 0 {
+        return Ok(());
     }
+
+    let mut pacman = process::Command::new("sudo");
+    pacman.args(["pacman", "-S"]);
 
     for package in packages.iter() {
         pacman.arg(package);
@@ -96,40 +109,65 @@ fn uninstall(packages: Vec<String>) -> Result<(), Error> {
     Ok(())
 }
 
-fn compare_package_lists<T>(pacman_packages: T, mut file_packages: T) -> (Vec<String>, Vec<String>)
+fn compare_package_lists<T>(mut pacman_packages: T, mut file_packages: T) -> (Vec<String>, Vec<String>)
     where T: Iterator<Item = String>
 {
-    let mut to_uninstall: Vec<String> = Vec::new();
     let mut to_install: Vec<String> = Vec::new();
+    let mut to_uninstall: Vec<String> = Vec::new();
 
-    for pacman_package in pacman_packages {
-        loop {
-            let next_file_package = file_packages.next();
-            match next_file_package {
-                None => {
-                    to_uninstall.push(pacman_package.clone());
-                    break;
-                },
-                Some(file_package) => {
-                    match file_package.cmp(&pacman_package) {
-                        Ordering::Equal => break,
-                        Ordering::Less => to_install.push(file_package),
-                        Ordering::Greater => {
-                            to_uninstall.push(pacman_package);
+    let mut current_pacman_package = String::default();
+    let mut current_file_package = String::default();
+
+    loop {
+        match String::cmp(&current_file_package, &current_pacman_package) {
+            Ordering::Equal => {
+                current_file_package = match file_packages.next() {
+                        None => {
+                            for package in pacman_packages {
+                                to_install.push(package)
+                            }
                             break;
                         },
-                    }
-                }
-            }
+                        Some(package) => package,
+                };
+                current_pacman_package = match pacman_packages.next() {
+                        None => {
+                            for package in file_packages {
+                                to_install.push(package)
+                            }
+                            break;
+                        },
+                        Some(package) => package,
+                };
+            },
+            Ordering::Less => {
+                to_install.push(current_file_package);
+                current_file_package = match file_packages.next() {
+                        None => {
+                            for package in pacman_packages {
+                                to_install.push(package)
+                            }
+                            break;
+                        },
+                        Some(package) => package,
+                };
+            },
+            Ordering::Greater => {
+                to_uninstall.push(current_pacman_package);
+                current_pacman_package = match pacman_packages.next() {
+                        None => {
+                            for package in file_packages {
+                                to_install.push(package)
+                            }
+                            break;
+                        },
+                        Some(package) => package,
+                };
+            },
         }
     }
 
-    // Install the remaining packages added to the file
-    for file_package in file_packages {
-        to_install.push(file_package);
-    }
-
-    (to_uninstall, to_install)
+    (to_install, to_uninstall)
 }
 
 fn process_package_list<'a>(packages_lines: impl Iterator<Item = &'a str>) -> Result<Vec<String>, Error> {
