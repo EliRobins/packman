@@ -10,11 +10,12 @@ Package lists in the config directory should use the .packman file extension, an
 
 ## Flags
 
+  - To pass an alternative config directory, use the -d or --config-directory flag
+
   - To update system, use the -u or --upgrade flag
 
   - To forbid uninstalling packages, use the -f or --forbid-uninstall flag
 
   - To list packages that should be uninstalled (useful when paired with --forbid-uninstall), use the -l or --list-uninstall flag
 
-  - To pass an alternative config directory, use the -d or --config-directory flag
-
+  - To search the config directory recursively, use the -r or --recursive flag

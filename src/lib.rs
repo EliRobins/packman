@@ -2,6 +2,7 @@ use std::{
     process,
     env,
     fs,
+    path::Path,
     cmp::Ordering,
 };
 
@@ -11,13 +12,16 @@ pub fn run(config: Config) -> Result<(), Error> {
     let config_directory = config.config_directory;
 
     let pacman_packages = get_pacman_packages()?;
-    let file_packages = get_file_packages(config_directory)?;
+    let file_packages = get_file_packages(Path::new(&config_directory), config.recursive)?;
 
     let (to_install, to_uninstall) = compare_package_lists(pacman_packages.into_iter(), file_packages.into_iter());
+    if config.upgrade_system {
+        logln!("Updating system.");
+        update()?
+    }
     install(to_install)?;
-    if config.upgrade_system { update()? }
     if config.list_uninstall { list_uninstall(to_uninstall.iter(), to_uninstall.len() == 0); } 
-    if config.allow_uninstall { uninstall(to_uninstall)?; }
+    if !config.forbid_uninstall { uninstall(to_uninstall)?; }
 
     Ok(())
 }
@@ -188,18 +192,34 @@ fn get_pacman_packages() -> Result<Vec<String>, Error> {
     Ok(process_package_list(pacman_lines)?)
 }
 
-fn get_file_packages(config_directory: String) -> Result<Vec<String>, Error> {
+fn get_file_packages(config_directory: &Path, recursive: bool) -> Result<Vec<String>, Error> {
     let mut package_list: Vec<String> = Vec::new();
+
     for entry in fs::read_dir(config_directory).map_err(|_| Error::DirectoryNotFound)? {
-        let file_contents = fs::read_to_string(entry.map_err(|_| Error::FileError)?.path())
-            .map_err(|_| Error::FileError)?;
-        let file_lines = file_contents.lines()
-            .filter(|line| *line != "")
-            .filter(|line| !line.starts_with("#"))
-            .map(str::trim)
-            .map(str::to_string);
-        package_list.extend(file_lines.collect::<Vec<String>>())
+        let path = entry.map_err(|_| Error::FileError)?.path();
+
+        if path.is_dir() && recursive {
+            package_list.extend(get_file_packages(&path, true)?);
+            continue;
+        }
+
+        let extension = match path.extension() {
+            None => continue,
+            Some(x) => x,
+        };
+
+        if extension == "packman" {
+            let file_contents = fs::read_to_string(path)
+                .map_err(|_| Error::FileError)?;
+            let file_lines = file_contents.lines()
+                .filter(|line| *line != "")
+                .filter(|line| !line.starts_with("#"))
+                .map(str::trim)
+                .map(str::to_string);
+            package_list.extend(file_lines.collect::<Vec<String>>())
+        }
     }
+
     Ok(process_package_list(package_list.iter().map(|str| &**str))?)
 }
 
@@ -214,6 +234,7 @@ pub enum Error {
     FailedInstall(Option<i32>),
     FailedUninstall(Option<i32>),
     InvalidArg(String),
+    ProvideDirectory,
 }
 
 impl Error {
@@ -235,53 +256,64 @@ impl Error {
                 None => format!("Pacman failed to uninstall packages"),
             },
             Error::InvalidArg(arg) => format!("Invalid argument {arg}"),
+            Error::ProvideDirectory => "Please provide the configuration directory with the -d or --config-directory flag.".to_string(),
         };
         elogln!("{message}");
     }
 }
 
 pub struct Config {
-    config_directory: String,
+    config_directory: String, // Default ~/.config/packman
     upgrade_system: bool, // Default false
-    allow_uninstall: bool, // Default true
+    forbid_uninstall: bool, // Default false
     list_uninstall: bool, // Default false
+    recursive: bool, // Default false
 }
 
 impl Config {
     pub fn build(mut args: impl Iterator<Item = String>) -> Result<Self, Error> {
         args.next(); // We don't care about the location of this program
 
-        let mut upgrade_system = false;
-        let mut allow_uninstall = true;
-        let mut list_uninstall = false;
         let mut config_directory = format!("{}/.config/packman", env::var("HOME").unwrap());
+        let mut upgrade_system = false;
+        let mut forbid_uninstall = false;
+        let mut list_uninstall = false;
+        let mut recursive = false;
 
-        for arg in args {
+        loop {
+            let arg = match args.next() {
+                None => break,
+                Some(x) => x,
+            };
+
             if arg.starts_with("--") {
-                if arg == "--upgrade" { upgrade_system = true; }
-                else if arg == "--disallow-uninstall" { allow_uninstall = false; }
+                if arg == "--config-directory" { config_directory = args.next().ok_or_else(|| Error::ProvideDirectory)? }
+                else if arg == "--upgrade" { upgrade_system = true; }
+                else if arg == "--forbid-uninstall" { forbid_uninstall = true; }
                 else if arg == "--list-uninstall" { list_uninstall = true; }
+                else if arg == "--recursive" { recursive = true; }
                 else { return Err(Error::InvalidArg(arg)) }
             } else if arg.starts_with("-") {
                 for flag in arg.chars() {
                     match flag {
                         '-' => (), // Skip the initial character
+                        'd' => config_directory = args.next().ok_or_else(|| Error::ProvideDirectory)?,
                         'u' => upgrade_system = true,
-                        'd' => allow_uninstall = false,
+                        'f' => forbid_uninstall = true,
                         'l' => list_uninstall = true,
-                        _ => return Err(Error::InvalidArg(flag.to_string())),
+                        'r' => recursive = true,
+                        _ => return Err(Error::InvalidArg(format!("-{flag}"))),
                     }
                 }
-            } else {
-                config_directory = arg;
             }
         }
 
         Ok(Self {
             config_directory,
             upgrade_system,
-            allow_uninstall,
-            list_uninstall
+            forbid_uninstall,
+            list_uninstall,
+            recursive,
         })
     }
 }
