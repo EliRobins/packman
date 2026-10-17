@@ -1,8 +1,11 @@
 use std::{
     process,
+    env,
     fs,
     cmp::Ordering,
 };
+
+mod logging;
 
 pub fn run(config: Config) -> Result<(), Error> {
     let file_location = config.file_location;
@@ -20,42 +23,39 @@ pub fn run(config: Config) -> Result<(), Error> {
 
 fn list_install<'a>(packages: impl Iterator<Item = &'a String>, empty: bool) {
     if empty {
-        println!("No packages to install.");
+        logln!("No packages to install.");
         return;
     }
 
-    print!("Installing");
+    log!("Installing");
     for package in packages {
-        print!(" {package}");
+        log!(" {package}");
     }
-    println!(".");
+    logln!(".");
 }
 
 fn list_uninstall<'a>(packages: impl Iterator<Item = &'a String>, empty: bool) {
     if empty {
-        println!("No packages to uninstall.");
+        logln!("No packages to uninstall.");
         return;
     }
 
-    print!("Uninstalling");
+    log!("Uninstalling");
     for package in packages {
-        print!(" {package}");
+        log!(" {package}");
     }
-    println!(".");
+    logln!(".");
 }
 
 fn install(packages: Vec<String>, upgrade_system: bool) -> Result<(), Error> {
     list_install(packages.iter(), packages.len() == 0);
-
-    if packages.len() == 0 {
-        return Ok(());
-    }
 
     let mut pacman = process::Command::new("sudo");
     pacman.arg("pacman");
     if upgrade_system {
         pacman.arg("-Syu");
     } else {
+        if packages.len() == 0 { return Ok(()); }
         pacman.arg("-S");
     }
 
@@ -189,7 +189,7 @@ impl Error {
             },
             Error::InvalidArg(arg) => format!("Invalid argument {arg}"),
         };
-        eprintln!("{message}");
+        eprintln!("PACKMAN: {message}");
     }
 }
 
@@ -206,8 +206,8 @@ impl Config {
 
         let mut upgrade_system = false;
         let mut allow_uninstall = true;
-        let mut file_location_option = None;
         let mut list_uninstall = false;
+        let mut file_location = format!("{}/dotfiles/packman/packman.conf", env::var("HOME").unwrap());
 
         for arg in args {
             if arg.starts_with("--") {
@@ -215,12 +215,20 @@ impl Config {
                 else if arg == "--disallow-uninstall" { allow_uninstall = false; }
                 else if arg == "--list-uninstall" { list_uninstall = true; }
                 else { return Err(Error::InvalidArg(arg)) }
+            } else if arg.starts_with("-") {
+                for flag in arg.chars() {
+                    match flag {
+                        '-' => (), // Skip the initial character
+                        'u' => upgrade_system = true,
+                        'd' => allow_uninstall = false,
+                        'l' => list_uninstall = true,
+                        _ => return Err(Error::InvalidArg(flag.to_string())),
+                    }
+                }
             } else {
-                file_location_option = Some(arg);
+                file_location = arg;
             }
         }
-
-        let file_location = file_location_option.ok_or_else(|| Error::NotEnoughArgs)?;
 
         Ok(Self {
             file_location,
