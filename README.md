@@ -6,9 +6,7 @@ Packages to be installed or uninstalled are displayed in lexicographical order b
 
 The config directory defaults to ~/.config/packman, but alternative locations can be passed.
 
-Package lists in the config directory should use the .packman file extension, and should consist of each package on a different line.
-
-Comments are supported in package lists using the '#' character at the start of a line.
+Package lists in the config directory should use the .packman file extension, and should consist of each package on a different line. Comments are supported in package lists using the '#' character at the start of a line.
 
 ## Flags
 
