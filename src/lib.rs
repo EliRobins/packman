@@ -8,10 +8,10 @@ use std::{
 mod logging;
 
 pub fn run(config: Config) -> Result<(), Error> {
-    let file_location = config.file_location;
+    let config_directory = config.config_directory;
 
     let pacman_packages = get_pacman_packages()?;
-    let file_packages = get_file_packages(file_location)?;
+    let file_packages = get_file_packages(config_directory)?;
 
     let (to_uninstall, to_install) = compare_package_lists(pacman_packages.into_iter(), file_packages.into_iter());
     let _ = install(to_install, config.upgrade_system)?;
@@ -29,9 +29,9 @@ fn list_install<'a>(packages: impl Iterator<Item = &'a String>, empty: bool) {
 
     log!("Installing");
     for package in packages {
-        log!(" {package}");
+        print!(" {package}");
     }
-    logln!(".");
+    println!(".");
 }
 
 fn list_uninstall<'a>(packages: impl Iterator<Item = &'a String>, empty: bool) {
@@ -42,9 +42,9 @@ fn list_uninstall<'a>(packages: impl Iterator<Item = &'a String>, empty: bool) {
 
     log!("Uninstalling");
     for package in packages {
-        log!(" {package}");
+        print!(" {package}");
     }
-    logln!(".");
+    println!(".");
 }
 
 fn install(packages: Vec<String>, upgrade_system: bool) -> Result<(), Error> {
@@ -132,13 +132,13 @@ fn compare_package_lists<T>(pacman_packages: T, mut file_packages: T) -> (Vec<St
     (to_uninstall, to_install)
 }
 
-fn process_package_list<'a>(packages_lines: impl Iterator<Item = &'a str>) -> Vec<String> {
+fn process_package_list<'a>(packages_lines: impl Iterator<Item = &'a str>) -> Result<Vec<String>, Error> {
     let mut packages = packages_lines.map(|str| {
         let mut words = str.split(' ');
-        words.next().expect("each line should have a valid output")
-    }).collect::<Vec<&str>>();
+        words.next()
+    }).collect::<Option<Vec<&str>>>().ok_or_else(|| Error::InvalidPackageList)?;
     packages.sort();
-    packages.into_iter().map(str::to_string).collect()
+    Ok(packages.into_iter().map(str::to_string).collect())
 }
 
 fn get_pacman_packages() -> Result<Vec<String>, Error> {
@@ -147,24 +147,31 @@ fn get_pacman_packages() -> Result<Vec<String>, Error> {
     let pacman_bytes = pacman.output().map_err(|_| Error::PacmanNotInstalled)?.stdout;
     let pacman_string = String::from_utf8(pacman_bytes).map_err(|_| Error::InvalidUTF8)?;
     let pacman_lines = pacman_string.lines();
-    Ok(process_package_list(pacman_lines))
+    Ok(process_package_list(pacman_lines)?)
 }
 
-fn get_file_packages(file_location: String) -> Result<Vec<String>, Error> {
-    let file_contents = fs::read_to_string(file_location).map_err(|_| Error::FileNotFound)?;
-    let file_lines = file_contents.lines()
-        .filter(|line| *line != "")
-        .filter(|line| !line.starts_with("#"))
-        .filter(|line| !line.starts_with("//"))
-        .map(str::trim);
-    Ok(process_package_list(file_lines))
+fn get_file_packages(config_directory: String) -> Result<Vec<String>, Error> {
+    let mut package_list: Vec<String> = Vec::new();
+    for entry in fs::read_dir(config_directory).map_err(|_| Error::DirectoryNotFound)? {
+        let file_contents = fs::read_to_string(entry.map_err(|_| Error::FileError)?.path())
+            .map_err(|_| Error::FileError)?;
+        let file_lines = file_contents.lines()
+            .filter(|line| *line != "")
+            .filter(|line| !line.starts_with("#"))
+            .map(str::trim)
+            .map(str::to_string);
+        package_list.extend(file_lines.collect::<Vec<String>>())
+    }
+    Ok(process_package_list(package_list.iter().map(|str| &**str))?)
 }
 
 pub enum Error {
     PacmanNotInstalled,
     InvalidUTF8,
-    FileNotFound,
-    NotEnoughArgs,
+    DirectoryNotFound,
+    EmptyDirectory,
+    FileError,
+    InvalidPackageList,
     NoExitCode,
     FailedInstall(Option<i32>),
     FailedUninstall(Option<i32>),
@@ -176,8 +183,10 @@ impl Error {
         let message = match &self {
             Error::PacmanNotInstalled => "Pacman is not installed.".to_string(),
             Error::InvalidUTF8 => "The output of pacman -Qe was not valid UTF-8, unable to parse.".to_string(),
-            Error::FileNotFound => "The inputted file was not found. Check that you entered the right location.".to_string(),
-            Error::NotEnoughArgs => "Please enter a file to update packages with.".to_string(),
+            Error::DirectoryNotFound => "The inputted directory was not found. Check that you entered the right location.".to_string(),
+            Error::EmptyDirectory => "The inputted directory is empty.".to_string(),
+            Error::FileError => "Finding the packages files failed.".to_string(),
+            Error::InvalidPackageList => "The formatted package list was unable to be parsed, as one of the lines was empty.".to_string(),
             Error::NoExitCode => "Pacman exited without an error code.".to_string(),
             Error::FailedInstall(exit_code) => match exit_code {
                 Some(code) => format!("Pacman failed to install packages with exit code {code}."),
@@ -189,12 +198,12 @@ impl Error {
             },
             Error::InvalidArg(arg) => format!("Invalid argument {arg}"),
         };
-        eprintln!("PACKMAN: {message}");
+        elogln!("{message}");
     }
 }
 
 pub struct Config {
-    file_location: String,
+    config_directory: String,
     upgrade_system: bool, // Default false
     allow_uninstall: bool, // Default true
     list_uninstall: bool, // Default false
@@ -207,7 +216,7 @@ impl Config {
         let mut upgrade_system = false;
         let mut allow_uninstall = true;
         let mut list_uninstall = false;
-        let mut file_location = format!("{}/dotfiles/packman/packman.conf", env::var("HOME").unwrap());
+        let mut config_directory = format!("{}/.config/packman", env::var("HOME").unwrap());
 
         for arg in args {
             if arg.starts_with("--") {
@@ -226,12 +235,12 @@ impl Config {
                     }
                 }
             } else {
-                file_location = arg;
+                config_directory = arg;
             }
         }
 
         Ok(Self {
-            file_location,
+            config_directory,
             upgrade_system,
             allow_uninstall,
             list_uninstall
