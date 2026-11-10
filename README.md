@@ -19,3 +19,5 @@ Package lists in the config directory should use the .packman file extension, an
   - To list packages that should be uninstalled (useful when paired with --forbid-uninstall), use the -l or --list-uninstall flag
 
   - To search the config directory recursively, use the -r or --recursive flag
+
+  - To list currently installed packages, use the -i or --list-installed flag

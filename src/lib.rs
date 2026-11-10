@@ -12,6 +12,14 @@ pub fn run(config: Config) -> Result<(), Error> {
     let config_directory = config.config_directory;
 
     let pacman_packages = get_pacman_packages()?;
+    if config.list_installed {
+        logln!("Listing installed packages");
+        for package in &pacman_packages {
+            println!("{package}");
+        }
+        logln!("Done listing installed packages");
+    }
+
     let file_packages = get_file_packages(Path::new(&config_directory), config.recursive)?;
 
     let (to_install, to_uninstall) = compare_package_lists(pacman_packages.into_iter(), file_packages.into_iter());
@@ -268,6 +276,7 @@ pub struct Config {
     forbid_uninstall: bool, // Default false
     list_uninstall: bool, // Default false
     recursive: bool, // Default false
+    list_installed: bool // Default false
 }
 
 impl Config {
@@ -279,6 +288,7 @@ impl Config {
         let mut forbid_uninstall = false;
         let mut list_uninstall = false;
         let mut recursive = false;
+        let mut list_installed = false;
 
         loop {
             let arg = match args.next() {
@@ -292,6 +302,7 @@ impl Config {
                 else if arg == "--forbid-uninstall" { forbid_uninstall = true; }
                 else if arg == "--list-uninstall" { list_uninstall = true; }
                 else if arg == "--recursive" { recursive = true; }
+                else if arg == "--list-installed" { list_installed = true; }
                 else { return Err(Error::InvalidArg(arg)) }
             } else if arg.starts_with("-") {
                 for flag in arg.chars() {
@@ -302,6 +313,7 @@ impl Config {
                         'f' => forbid_uninstall = true,
                         'l' => list_uninstall = true,
                         'r' => recursive = true,
+                        'i' => list_installed = true,
                         _ => return Err(Error::InvalidArg(format!("-{flag}"))),
                     }
                 }
@@ -314,6 +326,7 @@ impl Config {
             forbid_uninstall,
             list_uninstall,
             recursive,
+            list_installed,
         })
     }
 }
