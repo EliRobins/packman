@@ -56,7 +56,7 @@ fn list_install<'a>(packages: impl Iterator<Item = &'a String>, empty: bool) {
 
     log!("Installing");
     for package in packages {
-        print!(" {package}");
+        color!(" {package}");
     }
     println!(".");
 }
@@ -69,7 +69,7 @@ fn list_uninstall<'a>(packages: impl Iterator<Item = &'a String>, empty: bool) {
 
     log!("Uninstalling");
     for package in packages {
-        print!(" {package}");
+        color!(" {package}");
     }
     println!(".");
 }
